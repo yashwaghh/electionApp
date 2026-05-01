@@ -4,6 +4,7 @@ from google.cloud import translate_v3 as translate
 from app.services.db_service import get_chat_history, save_chat_turn
 import base64
 import os
+import asyncio
 from typing import Optional
 
 # Lazy Initialization Flags
@@ -97,7 +98,9 @@ async def generate_election_response(session_id: str, message: str, target_langu
             return "Error: Invalid image data provided."
 
     # 3. Fetch history and initiate chat
-    past_history = get_chat_history(session_id)
+    # EFFICIENCY: Run DB blocking calls in a thread pool to avoid blocking the async event loop
+    past_history = await asyncio.to_thread(get_chat_history, session_id)
+    
     formatted_history = [
         Content(role=turn["role"], parts=[Part.from_text(turn["content"])]) 
         for turn in past_history
@@ -105,28 +108,34 @@ async def generate_election_response(session_id: str, message: str, target_langu
     chat = model.start_chat(history=formatted_history)
     
     try:
-        # Generate Response
-        response = chat.send_message(payload_parts)
+        # EFFICIENCY: Use send_message_async for non-blocking I/O
+        response = await chat.send_message_async(payload_parts)
         final_text = response.text
         
         # 4. Multi-Language Translation (if requested)
         if target_language != "en":
             translate_client = get_translate_client()
-            result = translate_client.translate_text(
-                request={
-                    "parent": PARENT,
-                    "contents": [final_text],
-                    "target_language_code": target_language,
-                    "source_language_code": "en",
-                    "mime_type": "text/plain",
-                }
-            )
+            
+            # EFFICIENCY: Run the synchronous translate API call in a thread pool
+            def _do_translate():
+                return translate_client.translate_text(
+                    request={
+                        "parent": PARENT,
+                        "contents": [final_text],
+                        "target_language_code": target_language,
+                        "source_language_code": "en",
+                        "mime_type": "text/plain",
+                    }
+                )
+            result = await asyncio.to_thread(_do_translate)
             final_text = result.translations[0].translated_text
             
         # 5. Save and return
-        save_chat_turn(session_id, message, final_text)
+        # EFFICIENCY: Run DB blocking calls in a thread pool
+        await asyncio.to_thread(save_chat_turn, session_id, message, final_text)
         return final_text
     except Exception as e:
         return f"Error processing request: {str(e)}"
+
 
 

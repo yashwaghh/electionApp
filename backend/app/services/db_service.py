@@ -1,4 +1,5 @@
 from google.cloud import firestore
+import os
 
 # Lazy-initialized Firestore client using the specific project ID
 _db = None
@@ -8,7 +9,8 @@ def _get_db():
     """Lazily initialize Firestore client to avoid import-time GCP auth errors."""
     global _db
     if _db is None:
-        _db = firestore.Client(project="election-project-096")
+        project_id = os.getenv("GOOGLE_CLOUD_PROJECT", "election-project-096")
+        _db = firestore.Client(project=project_id)
     return _db
 
 
