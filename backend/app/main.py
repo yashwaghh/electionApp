@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from app.api.routes import router
 import os
 
@@ -11,12 +12,24 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# Allow CORS for local frontend development
+# Efficiency: Compress responses using GZip
+app.add_middleware(GZipMiddleware, minimum_size=1000)
+
+# Security: Restrict CORS origins instead of using wildcard "*"
+# In production, the frontend is served from the same domain, so CORS isn't strictly necessary for it,
+# but we keep localhost for local development.
+ALLOWED_ORIGINS = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:8000",
+    "https://election-assistant-1092237160807.us-central1.run.app"
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], 
+    allow_origins=ALLOWED_ORIGINS, 
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],  # Restrict methods instead of "*"
     allow_headers=["*"],
 )
 
@@ -32,8 +45,9 @@ if os.path.isdir(assets_dir):
     app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
 
 # Catch-all to serve index.html for the root UI
-@app.get("/{full_path:path}")
+@app.get("/{full_path:path}", include_in_schema=False)
 async def serve_frontend(full_path: str):
+    """Serves the compiled React Single Page Application."""
     index_file = os.path.join(STATIC_DIR, "index.html")
     if os.path.isfile(index_file):
         return FileResponse(index_file)
@@ -42,3 +56,4 @@ async def serve_frontend(full_path: str):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+
